@@ -1,6 +1,6 @@
-Patch for mod_auth_ldap, Version 2.0.63
+Global LDAP bind user for Apache 2.2.18 module mod_authnz_ldap
 
-This patch introduces three new configuration directives for mod_auth_ldap:
+This patch introduces three new configuration directives for mod_authnz_ldap:
 
  * AuthLDAPGlobalURL <URL>
  * AuthLDAPGlobalBindDN <DN>
@@ -16,7 +16,7 @@ I developed the patch of the following reason:
 		AuthLDAPURL "ldap://ldapsrv"
 		AuthLDAPBindDN "LDAP-USER"
 		AuthLDAPBindPassword "LDAP-PASSWORD"
-		authldapauthoritative Off
+		AuthzLDAPAuthoritative Off
 		require group CN=LDAP-enabled-Grp1,OU=mygroup,DC=mydomain,DC=local
 	</Location>
 	
@@ -26,12 +26,13 @@ I developed the patch of the following reason:
 		AuthLDAPURL "ldap://ldapsrv"
 		AuthLDAPBindDN "LDAP-USER"
 		AuthLDAPBindPassword "LDAP-PASSWORD"
-		authldapauthoritative Off
+		AuthzLDAPAuthoritative Off
 		require group CN=LDAP-enabled-Grp2,OU=mygroup,DC=mydomain,DC=local
 	</Location>
 ...
 ---
-You can see that AuthLDAPURL, AuthLDAPBindDN and AuthLDAPBindPassword always refers to the same values and we did nothing more than copy and paste.
+You can see that AuthLDAPURL, AuthLDAPBindDN and AuthLDAPBindPassword always refers to the same values and we did nothing more than copy and paste. 
+
 With AuthLDAPGlobal* you only define the values once for all <Location> or <Directory> sections:
 ---
 >> httpd.conf
@@ -43,7 +44,7 @@ With AuthLDAPGlobal* you only define the values once for all <Location> or <Dire
 		# inherited from AuthLDAPGlobal*
 		AuthType Basic
 		AuthName "LDAP"
-		authldapauthoritative Off
+		AuthzLDAPAuthoritative Off
 		require group CN=LDAP-enabled-Grp1,OU=mygroup,DC=mydomain,DC=local
 	</Location>
 	
@@ -51,7 +52,7 @@ With AuthLDAPGlobal* you only define the values once for all <Location> or <Dire
 		# inherited from AuthLDAPGlobal*
 		AuthType Basic
 		AuthName "LDAP"
-		authldapauthoritative Off
+		AuthzLDAPAuthoritative Off
 		require group CN=LDAP-enabled-Grp2,OU=mygroup,DC=mydomain,DC=local
 	</Location>
 	

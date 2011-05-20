@@ -1,0 +1,59 @@
+Patch for mod_auth_ldap, Version 2.0.63
+
+This patch introduces three new configuration directives for mod_auth_ldap:
+
+ * AuthLDAPGlobalURL <URL>
+ * AuthLDAPGlobalBindDN <DN>
+ * AuthLDAPGlobalBindPassword <Password>
+
+I developed the patch of the following reason:
+---
+>> httpd.conf
+...
+	<Location /ldap_enabled_1>
+		AuthType Basic
+		AuthName "LDAP"
+		AuthLDAPURL "ldap://ldapsrv"
+		AuthLDAPBindDN "LDAP-USER"
+		AuthLDAPBindPassword "LDAP-PASSWORD"
+		authldapauthoritative Off
+		require group CN=LDAP-enabled-Grp1,OU=mygroup,DC=mydomain,DC=local
+	</Location>
+	
+	<Location /ldap_enabled_2>
+		AuthType Basic
+		AuthName "LDAP"
+		AuthLDAPURL "ldap://ldapsrv"
+		AuthLDAPBindDN "LDAP-USER"
+		AuthLDAPBindPassword "LDAP-PASSWORD"
+		authldapauthoritative Off
+		require group CN=LDAP-enabled-Grp2,OU=mygroup,DC=mydomain,DC=local
+	</Location>
+...
+---
+You can see that AuthLDAPURL, AuthLDAPBindDN and AuthLDAPBindPassword always refers to the same values and we did nothing more than copy and paste.
+With AuthLDAPGlobal* you only define the values once for all <Location> or <Directory> sections:
+---
+>> httpd.conf
+	AuthLDAPGlobalURL "ldap://ldapsrv"
+	AuthLDAPGlobalBindDN "LDAP-USER"
+	AuthLDAPGlobalBindPassword "LDAP-PASSWORD"
+		
+	<Location /ldap_enabled_1>
+		# inherited from AuthLDAPGlobal*
+		AuthType Basic
+		AuthName "LDAP"
+		authldapauthoritative Off
+		require group CN=LDAP-enabled-Grp1,OU=mygroup,DC=mydomain,DC=local
+	</Location>
+	
+	<Location /ldap_enabled_1>
+		# inherited from AuthLDAPGlobal*
+		AuthType Basic
+		AuthName "LDAP"
+		authldapauthoritative Off
+		require group CN=LDAP-enabled-Grp2,OU=mygroup,DC=mydomain,DC=local
+	</Location>
+	
+
+Christopher Klein <ckl[at]ecw[dot]de> / http://wap.ecw.de

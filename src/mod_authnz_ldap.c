@@ -105,7 +105,6 @@ struct mod_auth_ldap_groupattr_entry_t {
 };
 
 static const char *mod_auth_ldap_parse_url(cmd_parms *cmd, void *config, const char *url, const char *);
-
 module AP_MODULE_DECLARE_DATA authnz_ldap_module;
 
 static APR_OPTIONAL_FN_TYPE(uldap_connection_close) *util_ldap_connection_close;
@@ -566,6 +565,12 @@ start_over:
 #ifdef LDAP_INSUFFICIENT_RIGHTS
                  : (LDAP_INSUFFICIENT_RIGHTS == result) ? AUTH_DENIED
 #endif
+#endif
+#ifdef LDAP_CONSTRAINT_VIOLATION
+    /* At least Sun Directory Server sends this if a user is
+     * locked. This is not covered by LDAP_SECURITY_ERROR.
+     */
+                 : (LDAP_CONSTRAINT_VIOLATION == result) ? AUTH_DENIED
 #endif
                  : AUTH_GENERAL_ERROR;
     }
@@ -1197,6 +1202,7 @@ static const command_rec authnz_ldap_cmds[] =
                   "where <i>username</i>\n"
                   "is the user name passed by the HTTP client. The search will be a subtree "
                   "search on the branch <b>ou=People, o=Airius</b>."),
+
     AP_INIT_TAKE1("AuthLDAPBindDN", ap_set_string_slot,
                   (void *)APR_OFFSETOF(authn_ldap_config_t, binddn), OR_AUTHCFG,
                   "DN to use to bind to LDAP server. If not provided, will do an anonymous bind."),
@@ -1393,7 +1399,7 @@ module AP_MODULE_DECLARE_DATA authnz_ldap_module =
     STANDARD20_MODULE_STUFF,
     create_authnz_ldap_dir_config,   /* dir config creater */
     NULL,                            /* dir merger --- default is to override */
-	authnz_ldap_create_server_config,/* server config */
+    NULL,                            /* server config */
     NULL,                            /* merge server config */
     authnz_ldap_cmds,                /* command apr_table_t */
     register_hooks                   /* register hooks */

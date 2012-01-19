@@ -1,230 +1,187 @@
-*** orig/mod_authnz_ldap.c	2010-10-07 12:28:46.000000000 +0200
---- src/mod_authnz_ldap.c	2011-05-20 11:39:30.503236000 +0200
-***************
-*** 76,81 ****
---- 76,82 ----
-                                          it's the exact string passed by the HTTP client */
-  
-      int secure;                     /* True if SSL connections are requested */
-+ 	int has_global_config_checked; /* True if global config was already checked and injected */
-  } authn_ldap_config_t;
-  
-  typedef struct {
-***************
-*** 83,95 ****
---- 84,111 ----
-      char *user;                     /* The username provided by the client */
-  } authn_ldap_request_t;
-  
-+ // macro definition for inheriting values
-+ #define INHERIT_VALUE(parent, child, field) \
-+ 	if (parent->field && !child->field) {     ap_log_error(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, \
-+ 	         r->server, "[%d] authn_ldap setting property field from global setting"); child->field = parent->field; }
+--- C:/ckl/dev/projects/other/staging/global-bind-user-for-mod_auth_ldap/src/mod_authnz_ldap.c.orig	Mo Aug 29 11:26:40 2011
++++ C:/ckl/dev/projects/other/staging/global-bind-user-for-mod_auth_ldap/src/mod_authnz_ldap.c	Do Jan 19 11:13:00 2012
+@@ -76,6 +76,7 @@
+                                         it's the exact string passed by the HTTP client */
+ 
+     int secure;                     /* True if SSL connections are requested */
++	int has_global_config_checked; /* True if global config was already checked and injected */
+ } authn_ldap_config_t;
+ 
+ typedef struct {
+@@ -83,13 +84,27 @@
+     char *user;                     /* The username provided by the client */
+ } authn_ldap_request_t;
+ 
++// macro definition for inheriting values
++#define INHERIT_VALUE(parent, child, field) \
++	if (parent->field && !child->field) {     ap_log_error(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, \
++	         r->server, "[%d] authn_ldap setting property field from global setting"); child->field = parent->field; }
++
++/* per server configuration */
++typedef struct {
++    char *binddn;			/* DN to bind to server (can be NULL) */
++    char *bindpw;			/* Password to bind to server (can be NULL) */
++	char *url;				/* URL to host */
++} authn_ldap_server_config_t;
++
+ /* maximum group elements supported */
+ #define GROUPATTR_MAX_ELTS 10
+ 
+ struct mod_auth_ldap_groupattr_entry_t {
++
+     char *name;
+ };
+ 
++static const char *mod_auth_ldap_parse_url(cmd_parms *cmd, void *config, const char *url, const char *);
+ module AP_MODULE_DECLARE_DATA authnz_ldap_module;
+ 
+ static APR_OPTIONAL_FN_TYPE(uldap_connection_close) *util_ldap_connection_close;
+@@ -332,10 +347,52 @@
+     sec->user_is_dn = 0;
+     sec->remote_user_attribute = NULL;
+     sec->compare_dn_on_server = 0;
++	sec->has_global_config_checked = 0;
+ 
+     return sec;
+ }
+ 
++static void *authnz_ldap_create_server_config(apr_pool_t *p, server_rec *s)
++{
++	authn_ldap_server_config_t *sec = 
++        (authn_ldap_server_config_t *)apr_pcalloc(p, sizeof(authn_ldap_server_config_t));
++
++    sec->binddn = NULL;
++    sec->bindpw = NULL;
++	sec->url = NULL;
 + 
-+ /* per server configuration */
-+ typedef struct {
-+     char *binddn;			/* DN to bind to server (can be NULL) */
-+     char *bindpw;			/* Password to bind to server (can be NULL) */
-+ 	char *url;				/* URL to host */
-+ } authn_ldap_server_config_t;
++    return sec;
++}
++
++static const char *set_global_bind_dn(cmd_parms *cmd, void *dummy, const char *arg) {
++    server_rec *s = cmd->server;
++	authn_ldap_server_config_t *serverconf = ap_get_module_config(s->module_config,
++		&authnz_ldap_module);
++
++	serverconf->binddn = apr_pstrdup(cmd->pool, arg);
++
++	return NULL;
++}
++
++static const char *set_global_url(cmd_parms *cmd, void *dummy, const char *arg) {
++    server_rec *s = cmd->server;
++	authn_ldap_server_config_t *serverconf = ap_get_module_config(s->module_config,
++		&authnz_ldap_module);
++
++	serverconf->url = apr_pstrdup(cmd->pool, arg);
++
++	return NULL;
++}
++
++static const char *set_global_bind_pw(cmd_parms *cmd, void *dummy, const char *arg) {
++    server_rec *s = cmd->server;
++	authn_ldap_server_config_t *serverconf = ap_get_module_config(s->module_config,
++		&authnz_ldap_module);
++	serverconf->bindpw = apr_pstrdup(cmd->pool, arg);
++
++	return NULL;
++}
++
+ static apr_status_t authnz_ldap_cleanup_connection_close(void *param)
+ {
+     util_ldap_connection_t *ldc = param;
+@@ -344,6 +401,47 @@
+ }
+ 
+ 
++/**
++ * Injects global LDAP settings from AuthLDAPGlobal* settings
++ * returns 0 if configuration has been alreday checked, returns 1 if configuration was updated
++ */
++static int authnz_ldap_update_config(request_rec *r, authn_ldap_config_t *sec)
++{
++
++	authn_ldap_server_config_t *conf_srv = (authn_ldap_server_config_t *)ap_get_module_config(r->server->module_config,
++                                                 &authnz_ldap_module);
++
++	// create new parameter list
++	// using pool reference of server otherwise our configuration will be lost on next request (r->pool won't work!)
++	cmd_parms parms = {NULL, 0, -1, NULL, NULL, NULL, NULL, r->server->process->pool, NULL, r->server, NULL, NULL};
++
++	// skip injection if per_dir configuration is already checked => performance
++	if (sec->has_global_config_checked) {
++		return 0;
++	}
++
++	// inherit value from global configuration - if present
++	INHERIT_VALUE(conf_srv, sec, binddn);
++	INHERIT_VALUE(conf_srv, sec, bindpw);
++
++	if (conf_srv->url && (!sec->url || strlen(sec->url) == 0)) {
++		ap_log_error(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, 
++			r->server, "[%d] authn_ldap Overwriting URL from parent"); 
++
++		sec->url = apr_pstrdup(r->server->process->pool, conf_srv->url);
++		
++		parms.pool = r->server->process->pool;
++		parms.server = r->server;
++									
++		mod_auth_ldap_parse_url(&parms, sec, sec->url, NULL);
++	}
++	
++	// this configuration is now *pimped*
++	sec->has_global_config_checked = 1;
++
++	return 1;
++}
++
+ /*
+  * Authentication Phase
+  * --------------------
+@@ -373,6 +471,9 @@
+         (authn_ldap_request_t *)apr_pcalloc(r->pool, sizeof(authn_ldap_request_t));
+     ap_set_module_config(r->request_config, &authnz_ldap_module, req);
+ 
++	// inject global LDAP setting
++	authnz_ldap_update_config(r, sec);
++
+ /*
+     if (!sec->enabled) {
+         return AUTH_USER_NOT_FOUND;
+@@ -561,6 +662,7 @@
+     const char *dn = NULL;
+     const char **vals = NULL;
+ 
++	authnz_ldap_update_config(r, sec);
+ /*
+     if (!sec->enabled) {
+         return DECLINED;
+@@ -1108,7 +1210,16 @@
+     AP_INIT_TAKE1("AuthLDAPBindPassword", ap_set_string_slot,
+                   (void *)APR_OFFSETOF(authn_ldap_config_t, bindpw), OR_AUTHCFG,
+                   "Password to use to bind to LDAP server. If not provided, will do an anonymous bind."),
++    
++    AP_INIT_TAKE1("AuthLDAPGlobalURL", set_global_url, NULL, OR_ALL, 
++				  "Global URL of LDAP connection. If AuthLDAPURL is not defined in <Directory> or <Location> tag, this URL will be taken"),
+ 
++    AP_INIT_TAKE1("AuthLDAPGlobalBindDN", set_global_bind_dn, NULL, OR_ALL, 
++				  "Global bind DN of LDAP connection. If AuthLDAPBindBN is not defined in <Directory> or <Location> tag, this DN will be taken"),
 + 
-  /* maximum group elements supported */
-  #define GROUPATTR_MAX_ELTS 10
-  
-  struct mod_auth_ldap_groupattr_entry_t {
-+ 
-      char *name;
-  };
-  
-+ static const char *mod_auth_ldap_parse_url(cmd_parms *cmd, void *config, const char *url, const char *);
-+ 
-  module AP_MODULE_DECLARE_DATA authnz_ldap_module;
-  
-  static APR_OPTIONAL_FN_TYPE(uldap_connection_close) *util_ldap_connection_close;
-***************
-*** 332,341 ****
---- 348,399 ----
-      sec->user_is_dn = 0;
-      sec->remote_user_attribute = NULL;
-      sec->compare_dn_on_server = 0;
-+ 	sec->has_global_config_checked = 0;
-  
-      return sec;
-  }
-  
-+ static void *authnz_ldap_create_server_config(apr_pool_t *p, server_rec *s)
-+ {
-+ 	authn_ldap_server_config_t *sec = 
-+         (authn_ldap_server_config_t *)apr_pcalloc(p, sizeof(authn_ldap_server_config_t));
-+ 
-+     sec->binddn = NULL;
-+     sec->bindpw = NULL;
-+ 	sec->url = NULL;
-+  
-+     return sec;
-+ }
-+ 
-+ static const char *set_global_bind_dn(cmd_parms *cmd, void *dummy, const char *arg) {
-+     server_rec *s = cmd->server;
-+ 	authn_ldap_server_config_t *serverconf = ap_get_module_config(s->module_config,
-+ 		&authnz_ldap_module);
-+ 
-+ 	serverconf->binddn = apr_pstrdup(cmd->pool, arg);
-+ 
-+ 	return NULL;
-+ }
-+ 
-+ static const char *set_global_url(cmd_parms *cmd, void *dummy, const char *arg) {
-+     server_rec *s = cmd->server;
-+ 	authn_ldap_server_config_t *serverconf = ap_get_module_config(s->module_config,
-+ 		&authnz_ldap_module);
-+ 
-+ 	serverconf->url = apr_pstrdup(cmd->pool, arg);
-+ 
-+ 	return NULL;
-+ }
-+ 
-+ static const char *set_global_bind_pw(cmd_parms *cmd, void *dummy, const char *arg) {
-+     server_rec *s = cmd->server;
-+ 	authn_ldap_server_config_t *serverconf = ap_get_module_config(s->module_config,
-+ 		&authnz_ldap_module);
-+ 	serverconf->bindpw = apr_pstrdup(cmd->pool, arg);
-+ 
-+ 	return NULL;
-+ }
-+ 
-  static apr_status_t authnz_ldap_cleanup_connection_close(void *param)
-  {
-      util_ldap_connection_t *ldc = param;
-***************
-*** 344,349 ****
---- 402,448 ----
-  }
-  
-  
-+ /**
-+  * Injects global LDAP settings from AuthLDAPGlobal* settings
-+  * returns 0 if configuration has been alreday checked, returns 1 if configuration was updated
-+  */
-+ static int authnz_ldap_update_config(request_rec *r, authn_ldap_config_t *sec)
-+ {
-+ 
-+ 	authn_ldap_server_config_t *conf_srv = (authn_ldap_server_config_t *)ap_get_module_config(r->server->module_config,
-+                                                  &authnz_ldap_module);
-+ 
-+ 	// create new parameter list
-+ 	// using pool reference of server otherwise our configuration will be lost on next request (r->pool won't work!)
-+ 	cmd_parms parms = {NULL, 0, -1, NULL, NULL, NULL, NULL, r->server->process->pool, NULL, r->server, NULL, NULL};
-+ 
-+ 	// skip injection if per_dir configuration is already checked => performance
-+ 	if (sec->has_global_config_checked) {
-+ 		return 0;
-+ 	}
-+ 
-+ 	// inherit value from global configuration - if present
-+ 	INHERIT_VALUE(conf_srv, sec, binddn);
-+ 	INHERIT_VALUE(conf_srv, sec, bindpw);
-+ 
-+ 	if (conf_srv->url && (!sec->url || strlen(sec->url) == 0)) {
-+ 		ap_log_error(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, 
-+ 			r->server, "[%d] authn_ldap Overwriting URL from parent"); 
-+ 
-+ 		sec->url = apr_pstrdup(r->server->process->pool, conf_srv->url);
-+ 		
-+ 		parms.pool = r->server->process->pool;
-+ 		parms.server = r->server;
-+ 									
-+ 		mod_auth_ldap_parse_url(&parms, sec, sec->url, NULL);
-+ 	}
-+ 	
-+ 	// this configuration is now *pimped*
-+ 	sec->has_global_config_checked = 1;
-+ 
-+ 	return 1;
-+ }
-+ 
-  /*
-   * Authentication Phase
-   * --------------------
-***************
-*** 373,378 ****
---- 472,480 ----
-          (authn_ldap_request_t *)apr_pcalloc(r->pool, sizeof(authn_ldap_request_t));
-      ap_set_module_config(r->request_config, &authnz_ldap_module, req);
-  
-+ 	// inject global LDAP setting
-+ 	authnz_ldap_update_config(r, sec);
-+ 
-  /*
-      if (!sec->enabled) {
-          return AUTH_USER_NOT_FOUND;
-***************
-*** 555,560 ****
---- 657,663 ----
-      const char *dn = NULL;
-      const char **vals = NULL;
-  
-+ 	authnz_ldap_update_config(r, sec);
-  /*
-      if (!sec->enabled) {
-          return DECLINED;
-***************
-*** 1094,1100 ****
-                    "where <i>username</i>\n"
-                    "is the user name passed by the HTTP client. The search will be a subtree "
-                    "search on the branch <b>ou=People, o=Airius</b>."),
-- 
-      AP_INIT_TAKE1("AuthLDAPBindDN", ap_set_string_slot,
-                    (void *)APR_OFFSETOF(authn_ldap_config_t, binddn), OR_AUTHCFG,
-                    "DN to use to bind to LDAP server. If not provided, will do an anonymous bind."),
---- 1197,1202 ----
-***************
-*** 1102,1107 ****
---- 1204,1218 ----
-      AP_INIT_TAKE1("AuthLDAPBindPassword", ap_set_string_slot,
-                    (void *)APR_OFFSETOF(authn_ldap_config_t, bindpw), OR_AUTHCFG,
-                    "Password to use to bind to LDAP server. If not provided, will do an anonymous bind."),
-+     
-+     AP_INIT_TAKE1("AuthLDAPGlobalURL", set_global_url, NULL, OR_ALL, 
-+ 				  "Global URL of LDAP connection. If AuthLDAPURL is not defined in <Directory> or <Location> tag, this URL will be taken"),
-+ 
-+     AP_INIT_TAKE1("AuthLDAPGlobalBindDN", set_global_bind_dn, NULL, OR_ALL, 
-+ 				  "Global bind DN of LDAP connection. If AuthLDAPBindBN is not defined in <Directory> or <Location> tag, this DN will be taken"),
-+  
-+     AP_INIT_TAKE1("AuthLDAPGlobalBindPassword", set_global_bind_pw, NULL, OR_ALL, 
-+ 				  "Global bind password of LDAP connection. If AuthLDAPPassword is not defined in <Directory> or <Location> tag, this password be taken"),
-  
-      AP_INIT_FLAG("AuthLDAPBindAuthoritative", ap_set_flag_slot,
-                    (void *)APR_OFFSETOF(authn_ldap_config_t, bind_authoritative), OR_AUTHCFG,
-***************
-*** 1197,1202 ****
---- 1308,1319 ----
-          return OK;
-      }
-  
-+ 	// check presence of AuthLDAPGlobal* settings
-+ 	if (strlen(charset_confname) < 5) {
-+ 		ap_log_error(APLOG_MARK, APLOG_DEBUG, APR_EBADPATH, s, "Length of charset confname is below 5, assuming use of AuthLDAPGlobal*");
-+ 		return OK;
-+ 	}
-+ 
-      charset_confname = ap_server_root_relative(p, charset_confname);
-      if (!charset_confname) {
-          ap_log_error(APLOG_MARK, APLOG_ERR, APR_EBADPATH, s,
-***************
-*** 1276,1282 ****
-      STANDARD20_MODULE_STUFF,
-      create_authnz_ldap_dir_config,   /* dir config creater */
-      NULL,                            /* dir merger --- default is to override */
-!     NULL,                            /* server config */
-      NULL,                            /* merge server config */
-      authnz_ldap_cmds,                /* command apr_table_t */
-      register_hooks                   /* register hooks */
---- 1393,1399 ----
-      STANDARD20_MODULE_STUFF,
-      create_authnz_ldap_dir_config,   /* dir config creater */
-      NULL,                            /* dir merger --- default is to override */
-! 	authnz_ldap_create_server_config,/* server config */
-      NULL,                            /* merge server config */
-      authnz_ldap_cmds,                /* command apr_table_t */
-      register_hooks                   /* register hooks */
++    AP_INIT_TAKE1("AuthLDAPGlobalBindPassword", set_global_bind_pw, NULL, OR_ALL, 
++				  "Global bind password of LDAP connection. If AuthLDAPPassword is not defined in <Directory> or <Location> tag, this password be taken"),
++
+     AP_INIT_FLAG("AuthLDAPBindAuthoritative", ap_set_flag_slot,
+                   (void *)APR_OFFSETOF(authn_ldap_config_t, bind_authoritative), OR_AUTHCFG,
+                   "Set to 'on' to return failures when user-specific bind fails - defaults to on."),
+@@ -1203,6 +1314,12 @@
+         return OK;
+     }
+ 
++	// check presence of AuthLDAPGlobal* settings
++	if (strlen(charset_confname) < 5) {
++		ap_log_error(APLOG_MARK, APLOG_DEBUG, APR_EBADPATH, s, "Length of charset confname is below 5, assuming use of AuthLDAPGlobal*");
++		return OK;
++	}
++
+     charset_confname = ap_server_root_relative(p, charset_confname);
+     if (!charset_confname) {
+         ap_log_error(APLOG_MARK, APLOG_ERR, APR_EBADPATH, s,

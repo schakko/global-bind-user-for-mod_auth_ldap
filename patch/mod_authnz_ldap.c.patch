@@ -1,6 +1,8 @@
---- C:/ckl/dev/projects/other/staging/global-bind-user-for-mod_auth_ldap/src/mod_authnz_ldap.c.orig	Mo Aug 29 11:26:40 2011
-+++ C:/ckl/dev/projects/other/staging/global-bind-user-for-mod_auth_ldap/src/mod_authnz_ldap.c	Do Jan 19 11:13:00 2012
-@@ -76,6 +76,7 @@
+diff --git "a/C:\\ckl\\dev\\projects\\other\\staging\\global-bind-user-for-mod_auth_ldap\\src\\mod_authnz_ldap.c.orig" "b/C:\\ckl\\dev\\projects\\other\\staging\\global-bind-user-for-mod_auth_ldap\\src\\mod_authnz_ldap.c"
+index ce1af3d..8f4ed28 100644
+--- "a/C:\\ckl\\dev\\projects\\other\\staging\\global-bind-user-for-mod_auth_ldap\\src\\mod_authnz_ldap.c.orig"
++++ "b/C:\\ckl\\dev\\projects\\other\\staging\\global-bind-user-for-mod_auth_ldap\\src\\mod_authnz_ldap.c"
+@@ -76,6 +76,7 @@ typedef struct {
                                          it's the exact string passed by the HTTP client */
  
      int secure;                     /* True if SSL connections are requested */
@@ -8,7 +10,7 @@
  } authn_ldap_config_t;
  
  typedef struct {
-@@ -83,13 +84,27 @@
+@@ -83,13 +84,27 @@ typedef struct {
      char *user;                     /* The username provided by the client */
  } authn_ldap_request_t;
  
@@ -36,7 +38,7 @@
  module AP_MODULE_DECLARE_DATA authnz_ldap_module;
  
  static APR_OPTIONAL_FN_TYPE(uldap_connection_close) *util_ldap_connection_close;
-@@ -332,10 +347,52 @@
+@@ -332,10 +347,52 @@ static void *create_authnz_ldap_dir_config(apr_pool_t *p, char *d)
      sec->user_is_dn = 0;
      sec->remote_user_attribute = NULL;
      sec->compare_dn_on_server = 0;
@@ -89,7 +91,7 @@
  static apr_status_t authnz_ldap_cleanup_connection_close(void *param)
  {
      util_ldap_connection_t *ldc = param;
-@@ -344,6 +401,47 @@
+@@ -344,6 +401,47 @@ static apr_status_t authnz_ldap_cleanup_connection_close(void *param)
  }
  
  
@@ -137,7 +139,7 @@
  /*
   * Authentication Phase
   * --------------------
-@@ -373,6 +471,9 @@
+@@ -373,6 +471,9 @@ static authn_status authn_ldap_check_password(request_rec *r, const char *user,
          (authn_ldap_request_t *)apr_pcalloc(r->pool, sizeof(authn_ldap_request_t));
      ap_set_module_config(r->request_config, &authnz_ldap_module, req);
  
@@ -147,7 +149,7 @@
  /*
      if (!sec->enabled) {
          return AUTH_USER_NOT_FOUND;
-@@ -561,6 +662,7 @@
+@@ -561,6 +662,7 @@ static int authz_ldap_check_user_access(request_rec *r)
      const char *dn = NULL;
      const char **vals = NULL;
  
@@ -155,24 +157,23 @@
  /*
      if (!sec->enabled) {
          return DECLINED;
-@@ -1108,7 +1210,16 @@
+@@ -1108,6 +1210,15 @@ static const command_rec authnz_ldap_cmds[] =
      AP_INIT_TAKE1("AuthLDAPBindPassword", ap_set_string_slot,
                    (void *)APR_OFFSETOF(authn_ldap_config_t, bindpw), OR_AUTHCFG,
                    "Password to use to bind to LDAP server. If not provided, will do an anonymous bind."),
 +    
 +    AP_INIT_TAKE1("AuthLDAPGlobalURL", set_global_url, NULL, OR_ALL, 
 +				  "Global URL of LDAP connection. If AuthLDAPURL is not defined in <Directory> or <Location> tag, this URL will be taken"),
- 
++
 +    AP_INIT_TAKE1("AuthLDAPGlobalBindDN", set_global_bind_dn, NULL, OR_ALL, 
 +				  "Global bind DN of LDAP connection. If AuthLDAPBindBN is not defined in <Directory> or <Location> tag, this DN will be taken"),
 + 
 +    AP_INIT_TAKE1("AuthLDAPGlobalBindPassword", set_global_bind_pw, NULL, OR_ALL, 
 +				  "Global bind password of LDAP connection. If AuthLDAPPassword is not defined in <Directory> or <Location> tag, this password be taken"),
-+
+ 
      AP_INIT_FLAG("AuthLDAPBindAuthoritative", ap_set_flag_slot,
                    (void *)APR_OFFSETOF(authn_ldap_config_t, bind_authoritative), OR_AUTHCFG,
-                   "Set to 'on' to return failures when user-specific bind fails - defaults to on."),
-@@ -1203,6 +1314,12 @@
+@@ -1203,6 +1314,12 @@ static int authnz_ldap_post_config(apr_pool_t *p, apr_pool_t *plog, apr_pool_t *
          return OK;
      }
  
@@ -185,3 +186,12 @@
      charset_confname = ap_server_root_relative(p, charset_confname);
      if (!charset_confname) {
          ap_log_error(APLOG_MARK, APLOG_ERR, APR_EBADPATH, s,
+@@ -1282,7 +1399,7 @@ module AP_MODULE_DECLARE_DATA authnz_ldap_module =
+     STANDARD20_MODULE_STUFF,
+     create_authnz_ldap_dir_config,   /* dir config creater */
+     NULL,                            /* dir merger --- default is to override */
+-    NULL,                            /* server config */
++    authnz_ldap_create_server_config, /* server config */
+     NULL,                            /* merge server config */
+     authnz_ldap_cmds,                /* command apr_table_t */
+     register_hooks                   /* register hooks */

@@ -1,4 +1,4 @@
-Global LDAP bind user for Apache 2.2.18 module mod_authnz_ldap
+Global LDAP bind user for Apache 2.2.21 module mod_authnz_ldap
 
 This patch introduces three new configuration directives for mod_authnz_ldap:
 
